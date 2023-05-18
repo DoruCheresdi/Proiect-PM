@@ -14,14 +14,15 @@ LiquidCrystal_I2C lcd(0x3F,16,2);  // set the LCD address to 0x3F for a 16 chars
 // defines pins numbers
 #define TRIGPIN 13
 #define ECHOPIN 12
-#define BUZZERPIN 0
 #define BUTTON1_PIN 3
 #define BUTTON2_PIN 2
 #define BUTTON3_PIN 4
+#define BUZZERPIN 5
 // #define BUTTON4_PIN 4
 
 #define NUMBER_MEASUREMENTS 5
 
+#define MAX_SECONDS_SINCE_BREAK 15
 #define NUMBER_SECONDS_ALARM1 20
 // defines variables
 int sensorPin = A0; // select the input pin for the potentiometer
@@ -37,7 +38,7 @@ DateTime startBreak;
 DateTime endBreak;
 TimeSpan totalBreakTime;
 
-char buffer[17];
+char buffer[36];
 
 long microsecondsToInches(long microseconds) {
    return microseconds / 74 / 2;
@@ -130,6 +131,7 @@ void setup() {
   // initialize break time:
   DateTime nowNow = rtc.now();
   totalBreakTime = nowNow - nowNow;
+  endBreak = nowNow;
 }
 
 
@@ -172,6 +174,8 @@ void loop() {
 
       TimeSpan breakTime = endBreak - startBreak;
       totalBreakTime = totalBreakTime + breakTime;
+      // sprintf(buffer, "Break time in seconds: %d\n", breakTime.totalseconds());  
+      // Serial.print(buffer);
       Serial.println("Break time in seconds:");
       Serial.println(breakTime.totalseconds());
     }
@@ -186,17 +190,33 @@ void loop() {
 
   delay(50);
   if (rtc.alarmFired(1)) {
-    // The alarm has just fired
+    // periodic check
+    Serial.println("\n");
     
     DateTime now = rtc.now(); // Get the current time
     char buff[] = "Alarm triggered at hh:mm:ss DDD, DD MMM YYYY";
     Serial.println(now.toString(buff));
+    // sprintf(buffer, "Too close warnings: %d\n", tooCloseWarnings);  
+    // Serial.print(buffer);
+    // sprintf(buffer, "number breaks: %d\n", numberWorkBreaks);  
+    // Serial.print(buffer);
+    // sprintf(buffer, "Total break time in seconds: %d\n", (int)totalBreakTime.totalseconds());  
+    // Serial.print(buffer);
     Serial.println("tooCloseWarnings:");
     Serial.println(tooCloseWarnings);
     Serial.println("number breaks:");
     Serial.println(numberWorkBreaks);
     Serial.println("Total break time in seconds:");
     Serial.println(totalBreakTime.totalseconds());
+    // check for break:
+    TimeSpan timeSinceBreak = now - endBreak;
+    if (timeSinceBreak.totalseconds() > MAX_SECONDS_SINCE_BREAK && !notAtDesk) {
+      // sprintf(buffer, "WARNING: Take a break: %d s since last break\n", (int)timeSinceBreak.totalseconds());  
+      // Serial.println(buffer);
+      Serial.println("WARNING: Take a break:");  
+      Serial.println(timeSinceBreak.totalseconds());
+    }
+    Serial.println("\n");
     // Disable and clear alarm
     rtc.disableAlarm(1);
     rtc.clearAlarm(1);
