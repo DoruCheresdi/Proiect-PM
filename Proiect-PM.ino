@@ -38,15 +38,18 @@ DateTime startBreak;
 DateTime endBreak;
 TimeSpan totalBreakTime;
 
-char buffer[36];
+#define STATE_RUNNING_NORMAL 0
+#define STATE_WARNING_DISTANCE_TOO_SMALL 1
+#define STATE_WARNING_NOT_AT_DESK 2
+#define STATE_CONFIG_POTENTIOMETER 5
+#define STATE_CONFIG_DISTANCE 6
+int currentState = 0;
 
-long microsecondsToInches(long microseconds) {
-   return microseconds / 74 / 2;
-}
+#define START_HOUR 8
+#define FINISH_HOUR 20
 
-long microsecondsToCentimeters(long microseconds) {
-   return microseconds / 29 / 2;
-}
+#define BUFFER_SIZE 36
+char buffer[BUFFER_SIZE];
 
 void measureDistance() {
 	long duration, distance;
@@ -59,7 +62,9 @@ void measureDistance() {
 	distance = (duration/2) / 29.1;
 
 	
-	if (distance >= 400 || distance <= 0) {
+		// Serial.print(distance);
+		// Serial.println(" cm");
+	if (distance >= 700 || distance <= 0) {
 		// Serial.println("Out of range");
 	}
 	else {
@@ -68,17 +73,8 @@ void measureDistance() {
 		// Serial.print(averageDistance);
 		// Serial.println(" cm");
 	}
-  printToLCD(averageDistance);
 }
 
-void printToLCD(int value) {
-  
-    // // Print a message on both lines of the LCD.
-    lcd.clear();         
-    lcd.setCursor(2,0);   //Set cursor to character 2 on line 0
-    itoa(value, buffer, 10);
-    lcd.print(buffer);
-}
 
 void alarmBuzzer() {
   digitalWrite (BUZZERPIN, HIGH); // Buzzer is switched on
@@ -103,6 +99,59 @@ void setAlarm() {
   rtc.clearAlarm(2);
   DateTime now = rtc.now(); // Get current time
   rtc.setAlarm1(now + TimeSpan(0, 0, 0, NUMBER_SECONDS_ALARM1), DS3231_A1_Second); // In 10 seconds time
+}
+
+void checkDistanceTooSmall() {
+  if (averageDistance < 10) {
+    if (!hasWarnedTooClose) {
+      hasWarnedTooClose = 1;
+      tooCloseWarnings++;
+      Serial.println("WARNING: Too close, minimum distance is 10cm");
+    }
+  } else {
+    if (hasWarnedTooClose) {
+      hasWarnedTooClose = 0;
+      Serial.println("Thanks for reajusting your distance");
+    }
+  }
+}
+
+void manageState() {
+  
+    // // Print a message on both lines of the LCD.
+  measureDistance();
+
+  lcd.clear();         
+  switch(currentState) {
+    case STATE_RUNNING_NORMAL: {
+      checkDistanceTooSmall();
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      snprintf(buffer, BUFFER_SIZE, "%d cm", averageDistance);
+      lcd.print(buffer);
+
+      if (!digitalRead(BUTTON1_PIN)) {
+        currentState = 
+      }
+
+      break;
+    }
+    case STATE_WARNING_NOT_AT_DESK: {
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      snprintf(buffer, BUFFER_SIZE, "%d cm", averageDistance);
+      lcd.print(buffer);
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      lcd.print("min dist 10cm!!");
+
+      break;
+    }
+    case STATE_WARNING_NOT_AT_DESK: {
+      
+    }
+    default:
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      lcd.print("ERROR");
+
+  }
 }
 
 void setup() {
@@ -134,6 +183,41 @@ void setup() {
   endBreak = nowNow;
 }
 
+void sendStatisticsToPC() {
+  // periodic check
+  Serial.println("\n");
+  
+  DateTime now = rtc.now(); // Get the current time
+  char buff[] = "Alarm triggered at hh:mm:ss DDD, DD MMM YYYY";
+  Serial.println(now.toString(buff));
+  // sprintf(buffer, "Too close warnings: %d\n", tooCloseWarnings);  
+  // Serial.print(buffer);
+  // sprintf(buffer, "number breaks: %d\n", numberWorkBreaks);  
+  // Serial.print(buffer);
+  // sprintf(buffer, "Total break time in seconds: %d\n", (int)totalBreakTime.totalseconds());  
+  // Serial.print(buffer);
+  Serial.println("tooCloseWarnings:");
+  Serial.println(tooCloseWarnings);
+  Serial.println("number breaks:");
+  Serial.println(numberWorkBreaks);
+  Serial.println("Total break time in seconds:");
+  Serial.println(totalBreakTime.totalseconds());
+  // check for break:
+  TimeSpan timeSinceBreak = now - endBreak;
+  if (timeSinceBreak.totalseconds() > MAX_SECONDS_SINCE_BREAK && !notAtDesk) {
+    // sprintf(buffer, "WARNING: Take a break: %d s since last break\n", (int)timeSinceBreak.totalseconds());  
+    // Serial.println(buffer);
+    Serial.println("WARNING: Take a break:");  
+    Serial.println(timeSinceBreak.totalseconds());
+  }
+  Serial.println("\n");
+  // Disable and clear alarm
+  rtc.disableAlarm(1);
+  rtc.clearAlarm(1);
+
+  // Perhaps reset to new time if required
+  rtc.setAlarm1(now + TimeSpan(0, 0, 0, NUMBER_SECONDS_ALARM1), DS3231_A1_Second);
+}
 
 void loop() {
   // unsigned int currentSeconds = myRTC.getSecond();
@@ -148,23 +232,13 @@ void loop() {
     Serial.println("Button 3 pressed");
   }
 
+  manageState();
   // getAndPrintTime();
-  measureDistance();
-  if (averageDistance < 10) {
-    if (!hasWarnedTooClose) {
-      hasWarnedTooClose = 1;
-      tooCloseWarnings++;
-      Serial.println("WARNING: Too close, minimum distance is 10cm");
-    }
-  } else {
-    if (hasWarnedTooClose) {
-      hasWarnedTooClose = 0;
-      Serial.println("Thanks for reajusting your distance");
-    }
-  }
+
+  // checking if distance is too small:
 
   
-
+  // checking if at desk:
   int deskMinDistance = 60;
   if (notAtDesk) {
     if (averageDistance < deskMinDistance) {
@@ -188,40 +262,13 @@ void loop() {
     }
   }
 
+  int analogValue = analogRead(A1);
+  int hour = map(analogValue, 0, 1018, 8, 20);
+  Serial.println(hour);
+  
   delay(50);
   if (rtc.alarmFired(1)) {
-    // periodic check
-    Serial.println("\n");
-    
-    DateTime now = rtc.now(); // Get the current time
-    char buff[] = "Alarm triggered at hh:mm:ss DDD, DD MMM YYYY";
-    Serial.println(now.toString(buff));
-    // sprintf(buffer, "Too close warnings: %d\n", tooCloseWarnings);  
-    // Serial.print(buffer);
-    // sprintf(buffer, "number breaks: %d\n", numberWorkBreaks);  
-    // Serial.print(buffer);
-    // sprintf(buffer, "Total break time in seconds: %d\n", (int)totalBreakTime.totalseconds());  
-    // Serial.print(buffer);
-    Serial.println("tooCloseWarnings:");
-    Serial.println(tooCloseWarnings);
-    Serial.println("number breaks:");
-    Serial.println(numberWorkBreaks);
-    Serial.println("Total break time in seconds:");
-    Serial.println(totalBreakTime.totalseconds());
-    // check for break:
-    TimeSpan timeSinceBreak = now - endBreak;
-    if (timeSinceBreak.totalseconds() > MAX_SECONDS_SINCE_BREAK && !notAtDesk) {
-      // sprintf(buffer, "WARNING: Take a break: %d s since last break\n", (int)timeSinceBreak.totalseconds());  
-      // Serial.println(buffer);
-      Serial.println("WARNING: Take a break:");  
-      Serial.println(timeSinceBreak.totalseconds());
-    }
-    Serial.println("\n");
-    // Disable and clear alarm
-    rtc.disableAlarm(1);
-    rtc.clearAlarm(1);
-
-    // Perhaps reset to new time if required
-    rtc.setAlarm1(now + TimeSpan(0, 0, 0, NUMBER_SECONDS_ALARM1), DS3231_A1_Second);
+    sendStatisticsToPC();
   }
+
 }
