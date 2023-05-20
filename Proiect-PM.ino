@@ -37,6 +37,7 @@ int numberWorkBreaks = 0;
 DateTime startBreak;
 DateTime endBreak;
 TimeSpan totalBreakTime;
+int clearTimer = 0;
 
 int hasChosenConfigMode = 0;
 DateTime startConfigDate;
@@ -164,33 +165,16 @@ void checkAtDesk() {
   }
 }
 
-ISR(TIMER0_COMPA_vect){    //This  is the interrupt request
-  timer++;
-}
-
-void startTimer() {
-  noInterrupts();
-  TCCR1A = 0;
-  TCCR1B = 0;
-  TCCR0A=(1<<WGM01);    //Set the CTC mode   
-  OCR0A=0xF9; //Value for ORC0A for 1ms 
-  TCCR0B |= (1<<CS01);    //Set the prescale 1/64 clock
-  TCCR0B |= (1<<CS00);
-  
-  timer = 0;
-  TIMSK0 |= (1<<OCIE0A);   //Set  the interrupt request
-  interrupts();
-  sei(); //Enable interrupt
-  
-}
-
 void manageState() {
   
     // // Print a message on both lines of the LCD.
   measureDistance();
 
-  Serial.println(currentState);
-  // lcd.clear();         
+  clearTimer++;
+  if (clearTimer > 5) {
+    clearTimer = 0;
+    lcd.clear();       
+  }  
   switch(currentState) {
     case STATE_RUNNING_NORMAL: {
       if (!digitalRead(BUTTON1_PIN)) {
@@ -198,7 +182,6 @@ void manageState() {
         isStartPhase = 1;
         startConfigDate = rtc.now();
         hasChosenConfigMode = 0;
-        startTimer();
       }
       if (!digitalRead(BUTTON3_PIN)) {
         // if B3 is pressed, show config:
@@ -238,12 +221,12 @@ void manageState() {
       break;
     }
     case STATE_CONFIG_CHOOSE_1: {
-    Serial.println("here1");
       if (!digitalRead(BUTTON3_PIN)) {
         currentState = STATE_CONFIG_CHOOSE_POT;
         hasChosenConfigMode = 1;
       }
-      if (timer >= 1000 * SECONDS_FOR_CHOOSING) {
+      TimeSpan timeSinceStartTimer = rtc.now() - startConfigDate;
+      if (timeSinceStartTimer.totalseconds() > SECONDS_FOR_CHOOSING) {
         // 10 seconds
         currentState = STATE_CONFIG_CHOOSE_DIST;
         hasChosenConfigMode = 1;
@@ -251,10 +234,8 @@ void manageState() {
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       lcd.print("Ch strt date b3");
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
-      TimeSpan timeSinceStartTimer = rtc.now() - startConfigDate;
       snprintf(buffer, BUFFER_SIZE, "%d s", SECONDS_FOR_CHOOSING - timeSinceStartTimer.totalseconds());
       lcd.print(buffer);
-    Serial.println("here2");
       
       break;
     }
@@ -270,7 +251,6 @@ void manageState() {
         }
         isStartPhase = 0;
         startConfigDate = rtc.now();
-        startTimer();
       }
       int analogValue = analogRead(A1);
       currentConfigHour = map(analogValue, 0, 1018, 8, 20);
@@ -294,7 +274,6 @@ void manageState() {
         }
         isStartPhase = 0;
         startConfigDate = rtc.now();
-        startTimer();
       }
       // use distance for config:
       currentConfigHour = map(averageDistance, 12, 30, 8, 20);
@@ -311,7 +290,8 @@ void manageState() {
         currentState = STATE_CONFIG_CHOOSE_POT;
         hasChosenConfigMode = 1;
       }
-      if (timer >= 1000 * SECONDS_FOR_CHOOSING) {
+      TimeSpan timeSinceStartTimer = rtc.now() - startConfigDate;
+      if (timeSinceStartTimer.totalseconds() > SECONDS_FOR_CHOOSING) {
         // 10 seconds
         currentState = STATE_CONFIG_CHOOSE_DIST;
         hasChosenConfigMode = 1;
@@ -319,7 +299,6 @@ void manageState() {
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       lcd.print("Ch end date b3");
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
-      TimeSpan timeSinceStartTimer = rtc.now() - startConfigDate;
       snprintf(buffer, BUFFER_SIZE, "%d s", SECONDS_FOR_CHOOSING - timeSinceStartTimer.totalseconds());
       lcd.print(buffer);
       
@@ -329,7 +308,6 @@ void manageState() {
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       lcd.print("ERROR");
 
-    Serial.println("here3");
   }
 }
 
@@ -397,10 +375,8 @@ void loop() {
   // getAndPrintTime();
   
   delay(50);
-    Serial.println("here2.5");
-  if (rtc.alarmFired(1)) {
-    sendStatisticsToPC();
-  }
-    Serial.println("here3");
+  // if (rtc.alarmFired(1)) {
+  //   sendStatisticsToPC();
+  // }
 
 }
