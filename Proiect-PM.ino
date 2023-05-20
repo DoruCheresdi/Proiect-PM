@@ -38,12 +38,29 @@ DateTime startBreak;
 DateTime endBreak;
 TimeSpan totalBreakTime;
 
+int hasChosenConfigMode = 0;
+DateTime startConfigDate;
+int isStartPhase = 0; // if currently configuring start phase
+int startHour = 8;
+int endHour = 20;
+int currentConfigHour = 8;
+int timer = 0;
+#define SECONDS_FOR_CHOOSING 10
+
 #define STATE_RUNNING_NORMAL 0
 #define STATE_WARNING_DISTANCE_TOO_SMALL 1
 #define STATE_WARNING_NOT_AT_DESK 2
+#define STATE_CONFIG_CHOOSE_1 3
+#define STATE_CONFIG_CHOOSE_2 4
 #define STATE_CONFIG_POTENTIOMETER 5
 #define STATE_CONFIG_DISTANCE 6
+#define STATE_CONFIG_CHOOSE_POT 7
+#define STATE_CONFIG_CHOOSE_DIST 8
 int currentState = 0;
+
+#define MODE_DEV 0
+#define MODE_PROD 1
+int runningMode = MODE_DEV;
 
 #define START_HOUR 8
 #define FINISH_HOUR 20
@@ -107,13 +124,64 @@ void checkDistanceTooSmall() {
       hasWarnedTooClose = 1;
       tooCloseWarnings++;
       Serial.println("WARNING: Too close, minimum distance is 10cm");
+      currentState = STATE_WARNING_DISTANCE_TOO_SMALL;
     }
   } else {
     if (hasWarnedTooClose) {
+      currentState = STATE_RUNNING_NORMAL;
       hasWarnedTooClose = 0;
       Serial.println("Thanks for reajusting your distance");
     }
   }
+}
+
+void checkAtDesk() {
+  // checking if at desk:
+  int deskMinDistance = 60;
+  if (notAtDesk) {
+    if (averageDistance < deskMinDistance) {
+      currentState = STATE_RUNNING_NORMAL;
+      notAtDesk = 0;
+      Serial.println("Worker came back to desk");
+      endBreak = rtc.now();
+
+      // calculate break time:
+      TimeSpan breakTime = endBreak - startBreak;
+      totalBreakTime = totalBreakTime + breakTime;
+      // sprintf(buffer, "Break time in seconds: %d\n", breakTime.totalseconds());  
+      // Serial.print(buffer);
+      Serial.println("Break time in seconds:");
+      Serial.println(breakTime.totalseconds());
+    }
+  } else {
+    if (averageDistance > deskMinDistance) {
+      currentState = STATE_WARNING_NOT_AT_DESK;
+      notAtDesk = 1;
+      numberWorkBreaks++;
+      Serial.println("Worker left desk");
+      startBreak = rtc.now();
+    }
+  }
+}
+
+ISR(TIMER0_COMPA_vect){    //This  is the interrupt request
+  timer++;
+}
+
+void startTimer() {
+  noInterrupts();
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCCR0A=(1<<WGM01);    //Set the CTC mode   
+  OCR0A=0xF9; //Value for ORC0A for 1ms 
+  TCCR0B |= (1<<CS01);    //Set the prescale 1/64 clock
+  TCCR0B |= (1<<CS00);
+  
+  timer = 0;
+  TIMSK0 |= (1<<OCIE0A);   //Set  the interrupt request
+  interrupts();
+  sei(); //Enable interrupt
+  
 }
 
 void manageState() {
@@ -124,18 +192,32 @@ void manageState() {
   lcd.clear();         
   switch(currentState) {
     case STATE_RUNNING_NORMAL: {
+      if (!digitalRead(BUTTON1_PIN)) {
+        currentState = STATE_CONFIG_CHOOSE_1;
+        isStartPhase = 1;
+        startConfigDate = rtc.now();
+        hasChosenConfigMode = 0;
+        startTimer();
+      }
+      if (!digitalRead(BUTTON3_PIN)) {
+        // if B3 is pressed, show config:
+        Serial.println("Start:");
+        Serial.println(startHour);
+        Serial.println("End:");
+        Serial.println(endHour);
+      }
+
       checkDistanceTooSmall();
+      checkAtDesk();
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       snprintf(buffer, BUFFER_SIZE, "%d cm", averageDistance);
       lcd.print(buffer);
 
-      if (!digitalRead(BUTTON1_PIN)) {
-        currentState = 
-      }
 
       break;
     }
-    case STATE_WARNING_NOT_AT_DESK: {
+    case STATE_WARNING_DISTANCE_TOO_SMALL: {
+      checkDistanceTooSmall();
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       snprintf(buffer, BUFFER_SIZE, "%d cm", averageDistance);
       lcd.print(buffer);
@@ -145,7 +227,100 @@ void manageState() {
       break;
     }
     case STATE_WARNING_NOT_AT_DESK: {
+      checkAtDesk();
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      snprintf(buffer, BUFFER_SIZE, "%d cm", averageDistance);
+      lcd.print(buffer);
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      lcd.print("Worker in break");
       
+      break;
+    }
+    case STATE_CONFIG_CHOOSE_1: {
+      if (!digitalRead(BUTTON3_PIN)) {
+        currentState = STATE_CONFIG_CHOOSE_POT;
+        hasChosenConfigMode = 1;
+      }
+      if (timer >= 1000 * SECONDS_FOR_CHOOSING) {
+        // 10 seconds
+        currentState = STATE_CONFIG_CHOOSE_DIST;
+        hasChosenConfigMode = 1;
+      }
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      lcd.print("Ch strt date b3");
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      TimeSpan timeSinceStartTimer = rtc.now() - startConfigDate;
+      snprintf(buffer, BUFFER_SIZE, "%d s", SECONDS_FOR_CHOOSING - timeSinceStartTimer.totalseconds());
+      lcd.print(buffer);
+      
+      break;
+    }
+    case STATE_CONFIG_CHOOSE_POT: {
+      if (!digitalRead(BUTTON1_PIN)) {
+        hasChosenConfigMode = 0;
+        if (isStartPhase) {
+          currentState = STATE_CONFIG_CHOOSE_2;
+          startHour = currentConfigHour;
+        } else {
+          currentState = STATE_RUNNING_NORMAL;
+          endHour = currentConfigHour;
+        }
+        isStartPhase = 0;
+        startConfigDate = rtc.now();
+        startTimer();
+      }
+      int analogValue = analogRead(A1);
+      currentConfigHour = map(analogValue, 0, 1018, 8, 20);
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      lcd.print("Press B1 pot");
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      snprintf(buffer, BUFFER_SIZE, "%d h", currentConfigHour);
+      lcd.print(buffer);
+      
+      break;
+    }
+    case STATE_CONFIG_CHOOSE_DIST: {
+      if (!digitalRead(BUTTON1_PIN)) {
+        hasChosenConfigMode = 0;
+        if (isStartPhase) {
+          currentState = STATE_CONFIG_CHOOSE_2;
+          startHour = currentConfigHour;
+        } else {
+          currentState = STATE_RUNNING_NORMAL;
+          endHour = currentConfigHour;
+        }
+        isStartPhase = 0;
+        startConfigDate = rtc.now();
+        startTimer();
+      }
+      // use distance for config:
+      currentConfigHour = map(averageDistance, 12, 30, 8, 20);
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      lcd.print("Press B1 dist");
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      snprintf(buffer, BUFFER_SIZE, "%d h", currentConfigHour);
+      lcd.print(buffer);
+      
+      break;
+    }
+    case STATE_CONFIG_CHOOSE_2: {
+      if (!digitalRead(BUTTON3_PIN)) {
+        currentState = STATE_CONFIG_CHOOSE_POT;
+        hasChosenConfigMode = 1;
+      }
+      if (timer >= 1000 * SECONDS_FOR_CHOOSING) {
+        // 10 seconds
+        currentState = STATE_CONFIG_CHOOSE_DIST;
+        hasChosenConfigMode = 1;
+      }
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      lcd.print("Ch strt end b3");
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      TimeSpan timeSinceStartTimer = rtc.now() - startConfigDate;
+      snprintf(buffer, BUFFER_SIZE, "%d s", SECONDS_FOR_CHOOSING - timeSinceStartTimer.totalseconds());
+      lcd.print(buffer);
+      
+      break;
     }
     default:
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
@@ -190,12 +365,6 @@ void sendStatisticsToPC() {
   DateTime now = rtc.now(); // Get the current time
   char buff[] = "Alarm triggered at hh:mm:ss DDD, DD MMM YYYY";
   Serial.println(now.toString(buff));
-  // sprintf(buffer, "Too close warnings: %d\n", tooCloseWarnings);  
-  // Serial.print(buffer);
-  // sprintf(buffer, "number breaks: %d\n", numberWorkBreaks);  
-  // Serial.print(buffer);
-  // sprintf(buffer, "Total break time in seconds: %d\n", (int)totalBreakTime.totalseconds());  
-  // Serial.print(buffer);
   Serial.println("tooCloseWarnings:");
   Serial.println(tooCloseWarnings);
   Serial.println("number breaks:");
@@ -205,8 +374,6 @@ void sendStatisticsToPC() {
   // check for break:
   TimeSpan timeSinceBreak = now - endBreak;
   if (timeSinceBreak.totalseconds() > MAX_SECONDS_SINCE_BREAK && !notAtDesk) {
-    // sprintf(buffer, "WARNING: Take a break: %d s since last break\n", (int)timeSinceBreak.totalseconds());  
-    // Serial.println(buffer);
     Serial.println("WARNING: Take a break:");  
     Serial.println(timeSinceBreak.totalseconds());
   }
@@ -234,37 +401,6 @@ void loop() {
 
   manageState();
   // getAndPrintTime();
-
-  // checking if distance is too small:
-
-  
-  // checking if at desk:
-  int deskMinDistance = 60;
-  if (notAtDesk) {
-    if (averageDistance < deskMinDistance) {
-      notAtDesk = 0;
-      Serial.println("Worker came back to desk");
-      endBreak = rtc.now();
-
-      TimeSpan breakTime = endBreak - startBreak;
-      totalBreakTime = totalBreakTime + breakTime;
-      // sprintf(buffer, "Break time in seconds: %d\n", breakTime.totalseconds());  
-      // Serial.print(buffer);
-      Serial.println("Break time in seconds:");
-      Serial.println(breakTime.totalseconds());
-    }
-  } else {
-    if (averageDistance > deskMinDistance) {
-      notAtDesk = 1;
-      numberWorkBreaks++;
-      Serial.println("Worker left desk");
-      startBreak = rtc.now();
-    }
-  }
-
-  int analogValue = analogRead(A1);
-  int hour = map(analogValue, 0, 1018, 8, 20);
-  Serial.println(hour);
   
   delay(50);
   if (rtc.alarmFired(1)) {
