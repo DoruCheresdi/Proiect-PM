@@ -189,7 +189,8 @@ void manageState() {
     // // Print a message on both lines of the LCD.
   measureDistance();
 
-  lcd.clear();         
+  Serial.println(currentState);
+  // lcd.clear();         
   switch(currentState) {
     case STATE_RUNNING_NORMAL: {
       if (!digitalRead(BUTTON1_PIN)) {
@@ -237,6 +238,7 @@ void manageState() {
       break;
     }
     case STATE_CONFIG_CHOOSE_1: {
+    Serial.println("here1");
       if (!digitalRead(BUTTON3_PIN)) {
         currentState = STATE_CONFIG_CHOOSE_POT;
         hasChosenConfigMode = 1;
@@ -252,11 +254,12 @@ void manageState() {
       TimeSpan timeSinceStartTimer = rtc.now() - startConfigDate;
       snprintf(buffer, BUFFER_SIZE, "%d s", SECONDS_FOR_CHOOSING - timeSinceStartTimer.totalseconds());
       lcd.print(buffer);
+    Serial.println("here2");
       
       break;
     }
     case STATE_CONFIG_CHOOSE_POT: {
-      if (!digitalRead(BUTTON1_PIN)) {
+      if (!digitalRead(BUTTON2_PIN)) {
         hasChosenConfigMode = 0;
         if (isStartPhase) {
           currentState = STATE_CONFIG_CHOOSE_2;
@@ -272,7 +275,7 @@ void manageState() {
       int analogValue = analogRead(A1);
       currentConfigHour = map(analogValue, 0, 1018, 8, 20);
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
-      lcd.print("Press B1 pot");
+      lcd.print("Press B2 pot");
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
       snprintf(buffer, BUFFER_SIZE, "%d h", currentConfigHour);
       lcd.print(buffer);
@@ -280,7 +283,7 @@ void manageState() {
       break;
     }
     case STATE_CONFIG_CHOOSE_DIST: {
-      if (!digitalRead(BUTTON1_PIN)) {
+      if (!digitalRead(BUTTON2_PIN)) {
         hasChosenConfigMode = 0;
         if (isStartPhase) {
           currentState = STATE_CONFIG_CHOOSE_2;
@@ -296,7 +299,7 @@ void manageState() {
       // use distance for config:
       currentConfigHour = map(averageDistance, 12, 30, 8, 20);
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
-      lcd.print("Press B1 dist");
+      lcd.print("Press B2 dist");
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
       snprintf(buffer, BUFFER_SIZE, "%d h", currentConfigHour);
       lcd.print(buffer);
@@ -314,7 +317,7 @@ void manageState() {
         hasChosenConfigMode = 1;
       }
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
-      lcd.print("Ch strt end b3");
+      lcd.print("Ch end date b3");
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
       TimeSpan timeSinceStartTimer = rtc.now() - startConfigDate;
       snprintf(buffer, BUFFER_SIZE, "%d s", SECONDS_FOR_CHOOSING - timeSinceStartTimer.totalseconds());
@@ -326,6 +329,7 @@ void manageState() {
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       lcd.print("ERROR");
 
+    Serial.println("here3");
   }
 }
 
@@ -389,22 +393,14 @@ void sendStatisticsToPC() {
 void loop() {
   // unsigned int currentSeconds = myRTC.getSecond();
 
-  if (!digitalRead(BUTTON1_PIN)) {
-    Serial.println("Button 1 pressed");
-  }
-  if (!digitalRead(BUTTON2_PIN)) {
-    Serial.println("Button 2 pressed");
-  }
-  if (!digitalRead(BUTTON3_PIN)) {
-    Serial.println("Button 3 pressed");
-  }
-
   manageState();
   // getAndPrintTime();
   
   delay(50);
+    Serial.println("here2.5");
   if (rtc.alarmFired(1)) {
     sendStatisticsToPC();
   }
+    Serial.println("here3");
 
 }
