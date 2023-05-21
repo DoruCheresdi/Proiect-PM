@@ -25,12 +25,14 @@ LiquidCrystal_I2C lcd(0x3F,16,2);  // set the LCD address to 0x3F for a 16 chars
 #define MAX_SECONDS_SINCE_BREAK 15
 #define NUMBER_SECONDS_ALARM1 20
 // defines variables
-int sensorPin = A0; // select the input pin for the potentiometer
-int sensorValue = 0; // variable to store the value coming from the sensor
+#define LIGHT_SENSOR_PIN A0 // select the input pin for the potentiometerensor
 long averageDistance = 20; // in cm
 
 int hasWarnedTooClose = 0;
 int tooCloseWarnings = 0;
+
+int lightAverageValue = 0; // variable to store the value coming from the s
+int lightWarnings = 0;
 
 int notAtDesk = 0;
 int numberWorkBreaks = 0;
@@ -53,18 +55,18 @@ int timer = 0;
 #define STATE_WARNING_NOT_AT_DESK 2
 #define STATE_CONFIG_CHOOSE_1 3
 #define STATE_CONFIG_CHOOSE_2 4
-#define STATE_CONFIG_POTENTIOMETER 5
-#define STATE_CONFIG_DISTANCE 6
-#define STATE_CONFIG_CHOOSE_POT 7
-#define STATE_CONFIG_CHOOSE_DIST 8
+#define STATE_CONFIG_DISTANCE 5
+#define STATE_CONFIG_CHOOSE_POT 6
+#define STATE_CONFIG_CHOOSE_DIST 7
+#define STATE_WARNING_TURN_ON_LIGHT_MODE 8
 int currentState = 0;
 
 #define MODE_DEV 0
 #define MODE_PROD 1
 int runningMode = MODE_DEV;
 
-#define START_HOUR 8
-#define FINISH_HOUR 20
+#define START_HOUR 0
+#define FINISH_HOUR 60
 
 #define BUFFER_SIZE 36
 char buffer[BUFFER_SIZE];
@@ -96,9 +98,9 @@ void measureDistance() {
 
 void alarmBuzzer() {
   digitalWrite (BUZZERPIN, HIGH); // Buzzer is switched on
-  delay (200); // wait mode for 4 seconds
+  delay (50); // wait mode for 4 seconds
   digitalWrite (BUZZERPIN, LOW); // Buzzer is switched off
-  delay (2000); // Wait mode for another two seconds in which the LED is then turned off
+  delay (50); // Wait mode for another two seconds in which the LED is then turned off
 }
 
 void getAndPrintTime() {
@@ -165,6 +167,24 @@ void checkAtDesk() {
   }
 }
 
+void checkLight() {
+  int lightValue = analogRead(A0);
+  lightAverageValue = lightAverageValue * NUMBER_MEASUREMENTS + lightValue;
+  lightAverageValue = lightAverageValue / (NUMBER_MEASUREMENTS + 1);
+
+  if (lightAverageValue > 10) {
+    if (currentState == STATE_RUNNING_NORMAL) {
+      currentState = STATE_WARNING_TURN_ON_LIGHT_MODE;
+      lightWarnings++;
+    }
+  }
+  if (currentState == STATE_WARNING_TURN_ON_LIGHT_MODE) {
+    if (lightAverageValue < 10) {
+      currentState = STATE_RUNNING_NORMAL;
+    }
+  }
+}
+
 void manageState() {
   
     // // Print a message on both lines of the LCD.
@@ -191,6 +211,7 @@ void manageState() {
         Serial.println(endHour);
       }
 
+      checkLight();
       checkDistanceTooSmall();
       checkAtDesk();
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
@@ -208,6 +229,8 @@ void manageState() {
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
       lcd.print("min dist 10cm!!");
 
+      alarmBuzzer();
+
       break;
     }
     case STATE_WARNING_NOT_AT_DESK: {
@@ -220,6 +243,19 @@ void manageState() {
       
       break;
     }
+    case STATE_WARNING_TURN_ON_LIGHT_MODE: {
+      checkLight();
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      snprintf(buffer, BUFFER_SIZE, "NO LIGHT %d", lightAverageValue);
+      lcd.print(buffer);
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      lcd.print("TURN ON LIGHT MODE");
+      
+      break;
+    }
+
+
+    // configuration states:
     case STATE_CONFIG_CHOOSE_1: {
       if (!digitalRead(BUTTON3_PIN)) {
         currentState = STATE_CONFIG_CHOOSE_POT;
@@ -253,7 +289,7 @@ void manageState() {
         startConfigDate = rtc.now();
       }
       int analogValue = analogRead(A1);
-      currentConfigHour = map(analogValue, 0, 1018, 8, 20);
+      currentConfigHour = map(analogValue, 0, 1000, START_HOUR, FINISH_HOUR);
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       lcd.print("Press B2 pot");
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
@@ -276,7 +312,7 @@ void manageState() {
         startConfigDate = rtc.now();
       }
       // use distance for config:
-      currentConfigHour = map(averageDistance, 12, 30, 8, 20);
+      currentConfigHour = map(averageDistance, 12, 50, START_HOUR, FINISH_HOUR);
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       lcd.print("Press B2 dist");
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
@@ -304,6 +340,8 @@ void manageState() {
       
       break;
     }
+
+
     default:
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       lcd.print("ERROR");
@@ -375,8 +413,8 @@ void loop() {
   // getAndPrintTime();
   
   delay(50);
-  // if (rtc.alarmFired(1)) {
-  //   sendStatisticsToPC();
-  // }
+  if (rtc.alarmFired(1)) {
+    sendStatisticsToPC();
+  }
 
 }
