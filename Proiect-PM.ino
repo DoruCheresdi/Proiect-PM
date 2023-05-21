@@ -22,8 +22,9 @@ LiquidCrystal_I2C lcd(0x3F,16,2);  // set the LCD address to 0x3F for a 16 chars
 
 #define NUMBER_MEASUREMENTS 5
 
-#define MAX_SECONDS_SINCE_BREAK 15
-#define NUMBER_SECONDS_ALARM1 20
+#define MAX_SECONDS_SINCE_BREAK 10
+#define MAX_SECONDS_NOT_WORKING 10
+#define NUMBER_SECONDS_ALARM2 20
 // defines variables
 #define LIGHT_SENSOR_PIN A0 // select the input pin for the potentiometerensor
 long averageDistance = 20; // in cm
@@ -36,18 +37,22 @@ int lightWarnings = 0;
 
 int notAtDesk = 0;
 int numberWorkBreaks = 0;
+int snoozes = 0;
 DateTime startBreak;
 DateTime endBreak;
 TimeSpan totalBreakTime;
 int clearTimer = 0;
+int hasMissedTooMuch = 0;
+
+String pass = "pass";
 
 int hasChosenConfigMode = 0;
 DateTime startConfigDate;
 int isStartPhase = 0; // if currently configuring start phase
 int startHour = 8;
 int endHour = 20;
+int isDuringWorkSchedule = 0;
 int currentConfigHour = 8;
-int timer = 0;
 #define SECONDS_FOR_CHOOSING 10
 
 #define STATE_RUNNING_NORMAL 0
@@ -59,6 +64,9 @@ int timer = 0;
 #define STATE_CONFIG_CHOOSE_POT 6
 #define STATE_CONFIG_CHOOSE_DIST 7
 #define STATE_WARNING_TURN_ON_LIGHT_MODE 8
+#define STATE_WARNING_TAKE_A_BREAK 9
+#define STATE_WAIT_PASS 10
+#define STATE_WORKER_FAILED 11
 int currentState = 0;
 
 #define MODE_DEV 0
@@ -112,13 +120,11 @@ void getAndPrintTime() {
   delay(1000);
 }
 
-void setAlarm() {
-  rtc.disableAlarm(1);
+void setAlarm2() {
   rtc.disableAlarm(2);
-  rtc.clearAlarm(1);
   rtc.clearAlarm(2);
   DateTime now = rtc.now(); // Get current time
-  rtc.setAlarm1(now + TimeSpan(0, 0, 0, NUMBER_SECONDS_ALARM1), DS3231_A1_Second); // In 10 seconds time
+  rtc.setAlarm2(now + TimeSpan(0, 0, 0, NUMBER_SECONDS_ALARM2), DS3231_A2_Minute); // In 10 seconds time
 }
 
 void checkDistanceTooSmall() {
@@ -143,7 +149,9 @@ void checkAtDesk() {
   int deskMinDistance = 60;
   if (notAtDesk) {
     if (averageDistance < deskMinDistance) {
-      currentState = STATE_RUNNING_NORMAL;
+      if (currentState == STATE_WARNING_NOT_AT_DESK) {
+        currentState = STATE_RUNNING_NORMAL;
+      }
       notAtDesk = 0;
       Serial.println("Worker came back to desk");
       endBreak = rtc.now();
@@ -158,7 +166,9 @@ void checkAtDesk() {
     }
   } else {
     if (averageDistance > deskMinDistance) {
-      currentState = STATE_WARNING_NOT_AT_DESK;
+      if (currentState == STATE_RUNNING_NORMAL || currentState == STATE_WARNING_TAKE_A_BREAK) {
+        currentState = STATE_WARNING_NOT_AT_DESK;
+      }
       notAtDesk = 1;
       numberWorkBreaks++;
       Serial.println("Worker left desk");
@@ -198,17 +208,34 @@ void manageState() {
   switch(currentState) {
     case STATE_RUNNING_NORMAL: {
       if (!digitalRead(BUTTON1_PIN)) {
-        currentState = STATE_CONFIG_CHOOSE_1;
-        isStartPhase = 1;
-        startConfigDate = rtc.now();
-        hasChosenConfigMode = 0;
+        currentState = STATE_WAIT_PASS;
+        break;
       }
       if (!digitalRead(BUTTON3_PIN)) {
         // if B3 is pressed, show config:
+        DateTime now = rtc.now();
+        char buff[] = "Showing stats triggered at hh:mm:ss DDD, DD MMM YYYY";
+        Serial.println(now.toString(buff));
         Serial.println("Start:");
         Serial.println(startHour);
         Serial.println("End:");
         Serial.println(endHour);
+      }
+      
+      // check for break:
+      TimeSpan timeSinceBreak = rtc.now() - endBreak;
+      if (isDuringWorkSchedule && timeSinceBreak.totalseconds() > MAX_SECONDS_SINCE_BREAK && !notAtDesk) {
+        currentState = STATE_WARNING_TAKE_A_BREAK;
+        break;
+      }
+      // Too much break:
+      int totalMissedTime = totalBreakTime.totalseconds();
+      if (notAtDesk) {
+        totalMissedTime += timeSinceBreak.totalseconds();
+      }
+      if (isDuringWorkSchedule && totalMissedTime > (endHour - startHour) * 3 / 4) {
+        currentState = STATE_WORKER_FAILED;
+        break;
       }
 
       checkLight();
@@ -217,6 +244,11 @@ void manageState() {
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       snprintf(buffer, BUFFER_SIZE, "%d cm", averageDistance);
       lcd.print(buffer);
+
+      if (isDuringWorkSchedule) {
+        lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+        lcd.print("Working");
+      }
 
 
       break;
@@ -235,6 +267,16 @@ void manageState() {
     }
     case STATE_WARNING_NOT_AT_DESK: {
       checkAtDesk();
+      // Too much break:
+      TimeSpan timeSinceBreak = rtc.now() - endBreak;
+      int totalMissedTime = totalBreakTime.totalseconds();
+      if (notAtDesk) {
+        totalMissedTime += timeSinceBreak.totalseconds();
+      }
+      if (isDuringWorkSchedule && totalMissedTime > (endHour - startHour) * 3 / 4) {
+        currentState = STATE_WORKER_FAILED;
+        break;
+      }
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       snprintf(buffer, BUFFER_SIZE, "%d cm", averageDistance);
       lcd.print(buffer);
@@ -253,9 +295,59 @@ void manageState() {
       
       break;
     }
+    case STATE_WARNING_TAKE_A_BREAK: {
+      checkAtDesk();
+      if (!digitalRead(BUTTON2_PIN)) {
+        // snooze button:
+        currentState = STATE_RUNNING_NORMAL;
+        endBreak = rtc.now();
+        snoozes++;
+        break;
+      }
+      TimeSpan timeSinceBreak = rtc.now() - endBreak;
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      lcd.print("WRN:Take a brk");
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      snprintf(buffer, BUFFER_SIZE, "SNZ B2 %d %d", timeSinceBreak.totalseconds(), averageDistance);
+      lcd.print(buffer);
+
+      alarmBuzzer();
+
+      break;
+    }
 
 
     // configuration states:
+    case STATE_WAIT_PASS: {
+      if (!digitalRead(BUTTON2_PIN)) {
+        currentState = STATE_CONFIG_CHOOSE_1;
+        isStartPhase = 1;
+        startConfigDate = rtc.now();
+        hasChosenConfigMode = 0;
+        resetStats();
+        break;
+      }
+
+      if(Serial.available()){
+        String newPass = Serial.readStringUntil('\n');
+        if (newPass.equals(pass)) {
+          currentState = STATE_CONFIG_CHOOSE_1;
+          isStartPhase = 1;
+          startConfigDate = rtc.now();
+          hasChosenConfigMode = 0;
+          resetStats();
+
+          break;
+        }
+      } 
+
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      lcd.print("Waiting for pass");
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      lcd.print("B2");
+      
+      break;
+    }
     case STATE_CONFIG_CHOOSE_1: {
       if (!digitalRead(BUTTON3_PIN)) {
         currentState = STATE_CONFIG_CHOOSE_POT;
@@ -312,7 +404,7 @@ void manageState() {
         startConfigDate = rtc.now();
       }
       // use distance for config:
-      currentConfigHour = map(averageDistance, 12, 50, START_HOUR, FINISH_HOUR);
+      currentConfigHour = map(averageDistance, 8, 50, START_HOUR, FINISH_HOUR);
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       lcd.print("Press B2 dist");
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
@@ -340,7 +432,19 @@ void manageState() {
       
       break;
     }
-
+    case STATE_WORKER_FAILED: {
+      hasMissedTooMuch = 1;
+      if (!isDuringWorkSchedule) {
+        // return to normal:
+        currentState = STATE_RUNNING_NORMAL;
+      }
+      lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
+      lcd.print("U missed");
+      lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
+      lcd.print("too much!!");
+      
+      break;
+    }
 
     default:
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
@@ -365,7 +469,7 @@ void setup() {
   lcd.clear();         
   lcd.backlight();      // Make sure backlight is on
 
-  setAlarm();
+  setAlarm2();
 
   
   pinMode(BUTTON1_PIN, INPUT_PULLUP);
@@ -378,32 +482,71 @@ void setup() {
   endBreak = nowNow;
 }
 
-void sendStatisticsToPC() {
+void resetAlarm2() {
   // periodic check
   Serial.println("\n");
   
   DateTime now = rtc.now(); // Get the current time
-  char buff[] = "Alarm triggered at hh:mm:ss DDD, DD MMM YYYY";
+  char buff[] = "Alarm2 triggered at hh:mm:ss DDD, DD MMM YYYY";
+  Serial.println(now.toString(buff));
+  Serial.println("\n");
+  // Disable and clear alarm
+  setAlarm2();
+}
+
+void resetStats() {
+  Serial.println("reset");
+  tooCloseWarnings = 0;
+  lightWarnings = 0;
+  numberWorkBreaks = 0;
+  DateTime now = rtc.now();
+  snoozes = 0;
+  hasMissedTooMuch = 0;
+  endBreak = now;
+  totalBreakTime = now - now;
+}
+
+void sendStatsToPC() {
+  Serial.println("\n");
+  
+  DateTime now = rtc.now(); // Get the current time
+  char buff[] = "End work triggered at hh:mm:ss DDD, DD MMM YYYY";
   Serial.println(now.toString(buff));
   Serial.println("tooCloseWarnings:");
   Serial.println(tooCloseWarnings);
+  Serial.println("lightWarnings:");
+  Serial.println(lightWarnings);
   Serial.println("number breaks:");
   Serial.println(numberWorkBreaks);
   Serial.println("Total break time in seconds:");
   Serial.println(totalBreakTime.totalseconds());
+  if (hasMissedTooMuch) {
+    Serial.println("Employee was absent too much!");
+  }
   // check for break:
   TimeSpan timeSinceBreak = now - endBreak;
-  if (timeSinceBreak.totalseconds() > MAX_SECONDS_SINCE_BREAK && !notAtDesk) {
-    Serial.println("WARNING: Take a break:");  
-    Serial.println(timeSinceBreak.totalseconds());
-  }
+  Serial.println("Time since break:");  
+  Serial.println(timeSinceBreak.totalseconds());
   Serial.println("\n");
-  // Disable and clear alarm
-  rtc.disableAlarm(1);
-  rtc.clearAlarm(1);
+}
 
-  // Perhaps reset to new time if required
-  rtc.setAlarm1(now + TimeSpan(0, 0, 0, NUMBER_SECONDS_ALARM1), DS3231_A1_Second);
+void manageWorkSchedule() {
+  DateTime now = rtc.now();
+  if (now.second() > startHour && now.second() < endHour) {
+    if (isDuringWorkSchedule == 0) {
+      isDuringWorkSchedule = 1;
+      // reset stats:
+      resetStats();
+      char buff[] = "Start work triggered at hh:mm:ss DDD, DD MMM YYYY";
+      Serial.println(now.toString(buff));
+    }    
+  } else {
+    if (isDuringWorkSchedule == 1) {
+      isDuringWorkSchedule = 0;
+      // send schedule to pc
+      sendStatsToPC();
+    }
+  }
 }
 
 void loop() {
@@ -413,8 +556,9 @@ void loop() {
   // getAndPrintTime();
   
   delay(50);
-  if (rtc.alarmFired(1)) {
-    sendStatisticsToPC();
+  if (rtc.alarmFired(2)) {
+    resetAlarm2();
   }
 
+  manageWorkSchedule();
 }
