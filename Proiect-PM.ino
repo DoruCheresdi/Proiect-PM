@@ -182,14 +182,14 @@ void checkLight() {
   lightAverageValue = lightAverageValue * NUMBER_MEASUREMENTS + lightValue;
   lightAverageValue = lightAverageValue / (NUMBER_MEASUREMENTS + 1);
 
-  if (lightAverageValue > 15) {
+  if (lightAverageValue > 30) {
     if (currentState == STATE_RUNNING_NORMAL) {
       currentState = STATE_WARNING_TURN_ON_LIGHT_MODE;
       lightWarnings++;
     }
   }
   if (currentState == STATE_WARNING_TURN_ON_LIGHT_MODE) {
-    if (lightAverageValue < 15) {
+    if (lightAverageValue < 30) {
       currentState = STATE_RUNNING_NORMAL;
     }
   }
