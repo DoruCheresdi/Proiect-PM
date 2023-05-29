@@ -529,6 +529,8 @@ void sendStatsToPC() {
   // Serial.println(numberWorkBreaks);
   snprintf(buffer, BUFFER_SIZE, "Total break time in seconds: %d", totalBreakTime.totalseconds());
   Serial.println(buffer);
+  snprintf(buffer, BUFFER_SIZE, "Total snoozes: %d", snoozes);
+  Serial.println(buffer);
   // Serial.println("Total break time in seconds:");
   // Serial.println(totalBreakTime.totalseconds());
   if (hasMissedTooMuch) {
