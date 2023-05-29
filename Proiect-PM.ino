@@ -24,10 +24,10 @@ LiquidCrystal_I2C lcd(0x3F,16,2);  // set the LCD address to 0x3F for a 16 chars
 
 #define MAX_SECONDS_SINCE_BREAK 10
 #define MAX_SECONDS_NOT_WORKING 10
-#define NUMBER_SECONDS_ALARM2 20
+// #define NUMBER_SECONDS_ALARM2 20
 // defines variables
 #define LIGHT_SENSOR_PIN A0 // select the input pin for the potentiometerensor
-long averageDistance = 20; // in cm
+int averageDistance = 20; // in cm
 
 int hasWarnedTooClose = 0;
 int tooCloseWarnings = 0;
@@ -76,7 +76,7 @@ int runningMode = MODE_DEV;
 #define START_HOUR 0
 #define FINISH_HOUR 60
 
-#define BUFFER_SIZE 36
+#define BUFFER_SIZE 60
 char buffer[BUFFER_SIZE];
 
 void measureDistance() {
@@ -106,9 +106,9 @@ void measureDistance() {
 
 void alarmBuzzer() {
   digitalWrite (BUZZERPIN, HIGH); // Buzzer is switched on
-  delay (50); // wait mode for 4 seconds
+  delay (20); // wait mode for 4 seconds
   digitalWrite (BUZZERPIN, LOW); // Buzzer is switched off
-  delay (50); // Wait mode for another two seconds in which the LED is then turned off
+  delay (80); // Wait mode for another two seconds in which the LED is then turned off
 }
 
 void getAndPrintTime() {
@@ -120,12 +120,12 @@ void getAndPrintTime() {
   delay(1000);
 }
 
-void setAlarm2() {
-  rtc.disableAlarm(2);
-  rtc.clearAlarm(2);
-  DateTime now = rtc.now(); // Get current time
-  rtc.setAlarm2(now + TimeSpan(0, 0, 0, NUMBER_SECONDS_ALARM2), DS3231_A2_Minute); // In 10 seconds time
-}
+// void setAlarm2() {
+//   rtc.disableAlarm(2);
+//   rtc.clearAlarm(2);
+//   DateTime now = rtc.now(); // Get current time
+//   rtc.setAlarm2(now + TimeSpan(0, 0, 0, NUMBER_SECONDS_ALARM2), DS3231_A2_Minute); // In 10 seconds time
+// }
 
 void checkDistanceTooSmall() {
   if (averageDistance < 10) {
@@ -159,10 +159,10 @@ void checkAtDesk() {
       // calculate break time:
       TimeSpan breakTime = endBreak - startBreak;
       totalBreakTime = totalBreakTime + breakTime;
-      // sprintf(buffer, "Break time in seconds: %d\n", breakTime.totalseconds());  
-      // Serial.print(buffer);
-      Serial.println("Break time in seconds:");
-      Serial.println(breakTime.totalseconds());
+      snprintf(buffer, BUFFER_SIZE, "Break time in seconds: %d\n", breakTime.totalseconds());  
+      Serial.print(buffer);
+      // Serial.println("Break time in seconds:");
+      // Serial.println(breakTime.totalseconds());
     }
   } else {
     if (averageDistance > deskMinDistance) {
@@ -242,7 +242,7 @@ void manageState() {
       checkDistanceTooSmall();
       checkAtDesk();
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
-      snprintf(buffer, BUFFER_SIZE, "%d cm", averageDistance);
+      snprintf(buffer, BUFFER_SIZE, "%d cm %hhu s", averageDistance, rtc.now().second());
       lcd.print(buffer);
 
       if (isDuringWorkSchedule) {
@@ -291,7 +291,9 @@ void manageState() {
       snprintf(buffer, BUFFER_SIZE, "NO LIGHT %d", lightAverageValue);
       lcd.print(buffer);
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
-      lcd.print("TURN ON LIGHT MODE");
+      lcd.print("TURN ON DARK MODE");
+
+      Serial.println("TURN ON DARK MODE ON PC!");
       
       break;
     }
@@ -308,7 +310,7 @@ void manageState() {
       lcd.setCursor(0,0);   //Set cursor to character 2 on line 0
       lcd.print("WRN:Take a brk");
       lcd.setCursor(0,1);   //Set cursor to character 2 on line 0
-      snprintf(buffer, BUFFER_SIZE, "SNZ B2 %d %d", timeSinceBreak.totalseconds(), averageDistance);
+      snprintf(buffer, BUFFER_SIZE, "SNZ B2 %d %d", averageDistance, timeSinceBreak.totalseconds());
       lcd.print(buffer);
 
       alarmBuzzer();
@@ -469,7 +471,7 @@ void setup() {
   lcd.clear();         
   lcd.backlight();      // Make sure backlight is on
 
-  setAlarm2();
+  // setAlarm2();
 
   
   pinMode(BUTTON1_PIN, INPUT_PULLUP);
@@ -482,17 +484,17 @@ void setup() {
   endBreak = nowNow;
 }
 
-void resetAlarm2() {
-  // periodic check
-  Serial.println("\n");
+// void resetAlarm2() {
+//   // periodic check
+//   Serial.println("\n");
   
-  DateTime now = rtc.now(); // Get the current time
-  char buff[] = "Alarm2 triggered at hh:mm:ss DDD, DD MMM YYYY";
-  Serial.println(now.toString(buff));
-  Serial.println("\n");
-  // Disable and clear alarm
-  setAlarm2();
-}
+//   DateTime now = rtc.now(); // Get the current time
+//   char buff[] = "Alarm2 triggered at hh:mm:ss DDD, DD MMM YYYY";
+//   Serial.println(now.toString(buff));
+//   Serial.println("\n");
+//   // Disable and clear alarm
+//   setAlarm2();
+// }
 
 void resetStats() {
   Serial.println("reset");
@@ -510,24 +512,35 @@ void sendStatsToPC() {
   Serial.println("\n");
   
   DateTime now = rtc.now(); // Get the current time
+  Serial.println("\n/*********************/");
   char buff[] = "End work triggered at hh:mm:ss DDD, DD MMM YYYY";
   Serial.println(now.toString(buff));
-  Serial.println("tooCloseWarnings:");
-  Serial.println(tooCloseWarnings);
-  Serial.println("lightWarnings:");
-  Serial.println(lightWarnings);
-  Serial.println("number breaks:");
-  Serial.println(numberWorkBreaks);
-  Serial.println("Total break time in seconds:");
-  Serial.println(totalBreakTime.totalseconds());
+  snprintf(buffer, BUFFER_SIZE, "tooCloseWarnings: %d", tooCloseWarnings);
+  Serial.println(buffer);
+  // Serial.println("tooCloseWarnings:");
+  // Serial.println(tooCloseWarnings);
+  snprintf(buffer, BUFFER_SIZE, "lightWarnings: %d", lightWarnings);
+  Serial.println(buffer);
+  // Serial.println("lightWarnings:");
+  // Serial.println(lightWarnings);
+  snprintf(buffer, BUFFER_SIZE, "number breaks: %d", numberWorkBreaks);
+  Serial.println(buffer);
+  // Serial.println("number breaks:");
+  // Serial.println(numberWorkBreaks);
+  snprintf(buffer, BUFFER_SIZE, "Total break time in seconds: %d", totalBreakTime.totalseconds());
+  Serial.println(buffer);
+  // Serial.println("Total break time in seconds:");
+  // Serial.println(totalBreakTime.totalseconds());
   if (hasMissedTooMuch) {
-    Serial.println("Employee was absent too much!");
+    Serial.println("!!!!Employee was absent too much!!!");
   }
   // check for break:
   TimeSpan timeSinceBreak = now - endBreak;
-  Serial.println("Time since break:");  
-  Serial.println(timeSinceBreak.totalseconds());
-  Serial.println("\n");
+  snprintf(buffer, BUFFER_SIZE, "Time since break: %d", timeSinceBreak.totalseconds());
+  Serial.println(buffer);
+  // Serial.println("Time since break:");  
+  // Serial.println(timeSinceBreak.totalseconds());
+  Serial.println("/*********************/\n");
 }
 
 void manageWorkSchedule() {
@@ -537,8 +550,10 @@ void manageWorkSchedule() {
       isDuringWorkSchedule = 1;
       // reset stats:
       resetStats();
+      Serial.println("\n\n/*********************/");
       char buff[] = "Start work triggered at hh:mm:ss DDD, DD MMM YYYY";
       Serial.println(now.toString(buff));
+      Serial.println("/*********************/\n");
     }    
   } else {
     if (isDuringWorkSchedule == 1) {
@@ -556,9 +571,9 @@ void loop() {
   // getAndPrintTime();
   
   delay(50);
-  if (rtc.alarmFired(2)) {
-    resetAlarm2();
-  }
+  // if (rtc.alarmFired(2)) {
+  //   resetAlarm2();
+  // }
 
   manageWorkSchedule();
 }
